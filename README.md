@@ -1,23 +1,23 @@
 # Caelestia Spatial Audio
 
 `dcqwqc/spatialaudio` adds a real PipeWire virtual sink for normal desktop
-applications. Pan mode passes its stereo monitor through a native equal-power
-matrix; the controller interpolates changes per sample, so UI drags and demos
-move smoothly. Width is bounded to unity and intensity is bounded to unity,
-which keeps the matrix from adding gain or clipping.
+applications. Pan mode is now a single PipeWire filter-chain: the virtual
+sink feeds a four-gain stereo matrix directly into the selected physical sink.
+There is no microphone capture client and no second/raw speaker path. The
+controller interpolates matrix gains live, so UI drags and demos move smoothly.
+Width and intensity are bounded to unity.
 
 HRTF mode is genuine: the filter-chain owns SPA's `sofa` spatializer using
 `/usr/share/libmysofa/MIT_KEMAR_normal_pinna.sofa`. Stereo desktop streams are
 downmixed into the SOFA's mono positional input, then rendered to the physical
-stereo sink. Azimuth/elevation changes regenerate that small graph; this is a
-brief, controlled reconnection because SPA SOFA controls are not exposed as a
-reliable live control API here. If SOFA cannot load, activation falls back to
-Pan and diagnostics report it; it never pretends HRTF is active.
+stereo sink. Azimuth/elevation are updated through the filter graph's live
+control parameters. If SOFA cannot load, activation falls back to Pan and
+diagnostics report it; it never pretends HRTF is active.
 
 ## Install / removal
 
-Run `./install.sh`. It compiles the small native Pan processor, symlinks this
-repository using the established Caelestia plugin convention, enables the
+Run `./install.sh`. It builds the native DSP reference/test binary, symlinks
+this repository using the established Caelestia plugin convention, enables the
 user controller service, and registers `dcqwqc/spatialaudio`. It does **not**
 restart Quickshell. The plugin setting is enabled by the installer and its
 controller comes up on the next shell setting sync (or user-service start).
@@ -50,4 +50,4 @@ performs the silent create/change/teardown/default-restore lifecycle check.
 
 ### Sound stage playground
 
-The native settings page uses Caelestia-themed controls throughout and includes audible left/center/right/HRTF probes plus a left → center → right sweep. A live position indicator mirrors the test target, while normal position/orbit controls remain available for real application audio.
+The native settings page uses Caelestia-themed controls throughout and includes audible left/center/right/HRTF probes plus a left → center → right sweep. Tests are temporary and restore the user's real mode/pan afterward. A live position indicator mirrors the test target, while normal position/orbit controls remain available for real application audio.

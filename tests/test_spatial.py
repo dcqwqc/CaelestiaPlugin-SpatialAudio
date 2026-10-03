@@ -81,6 +81,23 @@ class SpatialTests(unittest.TestCase):
         self.assertIn(str(controller.SOFA), graph)
         self.assertIn('target.object = "physical.sink"', graph)
 
+    def test_pan_matrix_center_is_identity(self):
+        self.assertEqual(controller.pan_matrix(0, 1, 1), (1.0, 0.0, 0.0, 1.0))
+        self.assertEqual(controller.pan_matrix(0.75, 1, 0), (1.0, 0.0, 0.0, 1.0))
+
+    def test_pan_matrix_hard_edges_fold_both_channels_safely(self):
+        self.assertEqual(controller.pan_matrix(-1, 1, 1), (0.5, 0.5, 0.0, 0.0))
+        self.assertEqual(controller.pan_matrix(1, 1, 1), (0.0, 0.0, 0.5, 0.5))
+
+    def test_pan_graph_has_one_direct_safe_audio_path(self):
+        graph = controller.graph(controller.DEFAULT, "physical.sink")
+        self.assertIn('target.object = "physical.sink"', graph)
+        self.assertIn('node.name = "caelestia_spatial_audio_out"', graph)
+        self.assertNotIn("target.object = 0", graph)
+        self.assertNotIn("caelestia_spatial_audio_raw", graph)
+        self.assertNotIn("Microphone", graph)
+        self.assertNotIn("capture_FL", graph)
+
     def test_pan_graph_is_stereo_virtual_sink(self):
         graph = controller.graph(controller.DEFAULT, "physical.sink")
         self.assertIn("media.class = Audio/Sink", graph)

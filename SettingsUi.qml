@@ -81,10 +81,7 @@ ColumnLayout {
             return;
 
         const nextMode = forceHrtf ? "HRTF" : String(settings.mode ?? "Pan");
-        settings.enabled = true;
-        settings.mode = nextMode;
-        settings.pan = clamp(panValue, -1, 1);
-        demoPan = settings.pan;
+        demoPan = clamp(panValue, -1, 1);
         testState = forceHrtf ? qsTr("Playing HRTF test at %1").arg(positionName(demoPan)) : qsTr("Playing at %1").arg(positionName(demoPan));
         audibleTest.command = [helper, "test-tone", testPayload(nextMode, demoPan)];
         audibleTest.running = true;
@@ -94,8 +91,6 @@ ColumnLayout {
         if (!settings || audibleTest.running)
             return;
 
-        settings.enabled = true;
-        settings.mode = "Pan";
         demoPan = -0.85;
         testState = qsTr("Sweeping left → center → right…");
         sweepVisual.restart();
@@ -466,38 +461,47 @@ ColumnLayout {
 
     GridLayout {
         Layout.fillWidth: true
-        columns: 4
+        columns: 2
         columnSpacing: Tokens.spacing.small
+        rowSpacing: Tokens.spacing.small
 
         IconTextButton {
             Layout.fillWidth: true
+            Layout.preferredWidth: 1
             icon: "arrow_back"
             text: qsTr("Left")
             type: IconTextButton.Tonal
+            horizontalPadding: Tokens.padding.small
             onClicked: root.setPan(-1)
         }
 
         IconTextButton {
             Layout.fillWidth: true
+            Layout.preferredWidth: 1
             icon: "filter_center_focus"
             text: qsTr("Center")
             type: IconTextButton.Tonal
+            horizontalPadding: Tokens.padding.small
             onClicked: root.setPan(0)
         }
 
         IconTextButton {
             Layout.fillWidth: true
+            Layout.preferredWidth: 1
             icon: "arrow_forward"
             text: qsTr("Right")
             type: IconTextButton.Tonal
+            horizontalPadding: Tokens.padding.small
             onClicked: root.setPan(1)
         }
 
         IconTextButton {
             Layout.fillWidth: true
+            Layout.preferredWidth: 1
             icon: "open_in_full"
             text: qsTr("Wide")
             type: IconTextButton.Tonal
+            horizontalPadding: Tokens.padding.small
             disabled: String(root.settings?.mode) === "HRTF"
             onClicked: {
                 if (root.settings) {
@@ -508,31 +512,28 @@ ColumnLayout {
         }
     }
 
-    RowLayout {
+    IconTextButton {
         Layout.fillWidth: true
-        spacing: Tokens.spacing.small
-
-        IconTextButton {
-            Layout.fillWidth: true
-            icon: root.orbiting ? "stop" : "360"
-            text: root.orbiting ? qsTr("Stop current-audio orbit") : qsTr("Orbit current audio")
-            type: root.orbiting ? IconTextButton.Filled : IconTextButton.Tonal
-            onClicked: {
-                root.orbiting = !root.orbiting;
-                orbit.running = root.orbiting;
-            }
+        icon: root.orbiting ? "stop" : "360"
+        text: root.orbiting ? qsTr("Stop current-audio orbit") : qsTr("Orbit current audio")
+        type: root.orbiting ? IconTextButton.Filled : IconTextButton.Tonal
+        shapeMorph: true
+        verticalPadding: Tokens.padding.medium
+        onClicked: {
+            root.orbiting = !root.orbiting;
+            orbit.running = root.orbiting;
         }
+    }
 
-        IconTextButton {
-            Layout.fillWidth: true
-            icon: "restart_alt"
-            text: qsTr("Reset position")
-            type: IconTextButton.Text
-            onClicked: {
-                root.orbiting = false;
-                orbit.running = false;
-                root.setPan(0);
-            }
+    IconTextButton {
+        Layout.fillWidth: true
+        icon: "restart_alt"
+        text: qsTr("Reset position to center")
+        type: IconTextButton.Text
+        onClicked: {
+            root.orbiting = false;
+            orbit.running = false;
+            root.setPan(0);
         }
     }
 

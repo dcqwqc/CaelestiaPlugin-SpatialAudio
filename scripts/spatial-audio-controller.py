@@ -151,13 +151,58 @@ def hrtf_azimuth(pan: float) -> float:
     return (-float(pan) * 90.0) % 360.0
 
 
+def pan_matrix(pan: float, width: float, intensity: float) -> tuple[float, float, float, float]:
+    """Return L<-L, L<-R, R<-L, R<-R gains for the stereo stage."""
+    p = max(-1.0, min(1.0, float(pan)))
+    w = max(0.0, min(1.0, float(width)))
+    t = max(0.0, min(1.0, float(intensity)))
+
+    a = 0.5 * (1.0 + w)
+    b = 0.5 * (1.0 - w)
+
+    if p >= 0.0:
+        pll = (1.0 - p) * a
+        plr = (1.0 - p) * b
+        prl = (1.0 - 0.5 * p) * b + 0.5 * p * a
+        prr = (1.0 - 0.5 * p) * a + 0.5 * p * b
+    else:
+        qv = -p
+        pll = (1.0 - 0.5 * qv) * a + 0.5 * qv * b
+        plr = (1.0 - 0.5 * qv) * b + 0.5 * qv * a
+        prl = (1.0 - qv) * b
+        prr = (1.0 - qv) * a
+
+    return (
+        (1.0 - t) + t * pll,
+        t * plr,
+        t * prl,
+        (1.0 - t) + t * prr,
+    )
+
+
 def graph(cfg: dict, physical: str) -> str:
     if cfg["mode"] == "Pan":
+        ll, lr, rl, rr = pan_matrix(cfg["pan"], cfg["width"], cfg["intensity"])
         return f'''{{ node.description = "Caelestia Spatial Audio (Pan)"
 filter.graph = {{
-  nodes = [ {{ type = builtin name = copy label = copy }} ]
-  inputs = [ "copy:In L" "copy:In R" ]
-  outputs = [ "copy:Out L" "copy:Out R" ]
+  nodes = [
+    {{ type = builtin name = copyL label = copy }}
+    {{ type = builtin name = copyR label = copy }}
+    {{ type = builtin name = mixL label = mixer control = {{
+       "Gain 1" = {ll:.8f} "Gain 2" = {lr:.8f}
+    }} }}
+    {{ type = builtin name = mixR label = mixer control = {{
+       "Gain 1" = {rl:.8f} "Gain 2" = {rr:.8f}
+    }} }}
+  ]
+  links = [
+    {{ output = "copyL:Out" input = "mixL:In 1" }}
+    {{ output = "copyR:Out" input = "mixL:In 2" }}
+    {{ output = "copyL:Out" input = "mixR:In 1" }}
+    {{ output = "copyR:Out" input = "mixR:In 2" }}
+  ]
+  inputs = [ "copyL:In" "copyR:In" ]
+  outputs = [ "mixL:Out" "mixR:Out" ]
 }}
 audio.channels = 2
 audio.position = [ FL FR ]
@@ -165,12 +210,17 @@ capture.props = {{
   node.name = {q(VIRTUAL)}
   media.class = Audio/Sink
   node.virtual = true
+  audio.channels = 2
+  audio.position = [ FL FR ]
 }}
 playback.props = {{
-  node.name = {q(VIRTUAL + "_raw")}
+  node.name = {q(VIRTUAL + "_out")}
   node.passive = true
   node.dont-reconnect = true
-  target.object = 0
+  target.object = {q(physical)}
+  audio.channels = 2
+  audio.position = [ FL FR ]
+  stream.dont-remix = true
 }}
 }}'''
 
@@ -217,9 +267,6 @@ playback.props = {{
 class Runtime:
     def __init__(self) -> None:
         self.cli = None
-        self.rec = None
-        self.dsp = None
-        self.play = None
         self.vid: int | None = None
         self.mode: str | None = None
         self.physical: str | None = None
@@ -229,12 +276,15 @@ class Runtime:
         self.target_hrtf = [0.0, 0.0, 1.0]
         self.move_started = 0.0
         self.move_duration = 0.22
+        self.current_pan = [0.0, 1.0, 1.0]
+        self.start_pan = [0.0, 1.0, 1.0]
+        self.target_pan = [0.0, 1.0, 1.0]
 
     def terminate(self) -> None:
-        for proc in (self.rec, self.dsp, self.play, self.cli):
+        for proc in (self.cli,):
             if proc and proc.poll() is None:
                 proc.terminate()
-        for proc in (self.rec, self.dsp, self.play, self.cli):
+        for proc in (self.cli,):
             if not proc:
                 continue
             try:
@@ -245,7 +295,7 @@ class Runtime:
                     proc.wait(timeout=0.5)
                 except subprocess.TimeoutExpired:
                     pass
-        self.cli = self.rec = self.dsp = self.play = None
+        self.cli = None
         self.vid = None
         self.mode = None
         self.physical = None
@@ -303,51 +353,13 @@ class Runtime:
         self.physical = name
 
         if self.mode == "Pan":
-            dspbin = ROOT / "native/spatial-dsp"
-            if not dspbin.is_file():
-                self.last_error = "Pan DSP binary missing"
-                self.terminate()
-                return False
-
-            self.rec = subprocess.Popen(
-                [
-                    "pw-cat", "--record", "--raw", "--format", "f32",
-                    "--rate", "48000", "--channels", "2",
-                    "--channel-map", "FL,FR",
-                    "--target", VIRTUAL,
-                    "-P", "node.name=caelestia_spatial_audio_capture",
-                    "-",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-            self.dsp = subprocess.Popen(
-                [str(dspbin), str(CONFIG)],
-                stdin=self.rec.stdout,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-            if self.rec.stdout:
-                self.rec.stdout.close()
-
-            self.play = subprocess.Popen(
-                [
-                    "pw-cat", "--playback", "--raw", "--format", "f32",
-                    "--rate", "48000", "--channels", "2",
-                    "--channel-map", "FL,FR",
-                    "--target", name,
-                    "-P", "node.name=caelestia_spatial_audio_playback,node.dont-reconnect=true",
-                    "-",
-                ],
-                stdin=self.dsp.stdout,
-                stderr=subprocess.DEVNULL,
-            )
-            if self.dsp.stdout:
-                self.dsp.stdout.close()
-
-            time.sleep(0.18)
-            if not self.healthy(check_node=False):
-                self.last_error = "Pan capture/DSP/playback pipeline exited"
+            self.current_pan = [cfg["pan"], cfg["width"], cfg["intensity"]]
+            self.start_pan = self.current_pan.copy()
+            self.target_pan = self.current_pan.copy()
+            self.move_started = time.monotonic()
+            self.move_duration = max(0.02, cfg["movement_ms"] / 1000.0)
+            if not self._send_pan(*self.current_pan):
+                self.last_error = "Could not set Pan controls"
                 self.terminate()
                 return False
         else:
@@ -367,15 +379,49 @@ class Runtime:
     def healthy(self, check_node: bool = True) -> bool:
         if not self.cli or self.cli.poll() is not None or self.vid is None:
             return False
-        if self.mode == "Pan":
-            if any(
-                proc is None or proc.poll() is not None
-                for proc in (self.rec, self.dsp, self.play)
-            ):
-                return False
         if check_node and node_id(VIRTUAL) != self.vid:
             return False
         return True
+
+    def _send_pan(self, pan: float, width: float, intensity: float) -> bool:
+        if self.vid is None:
+            return False
+        ll, lr, rl, rr = pan_matrix(pan, width, intensity)
+        payload = (
+            '{ params = [ '
+            '"mixL:Gain 1" %.8f "mixL:Gain 2" %.8f '
+            '"mixR:Gain 1" %.8f "mixR:Gain 2" %.8f ] }'
+            % (ll, lr, rl, rr)
+        )
+        return self._command(f"set-param {self.vid} Props {payload}")
+
+    def set_pan_target(self, cfg: dict) -> None:
+        if self.mode != "Pan":
+            return
+        target = [cfg["pan"], cfg["width"], cfg["intensity"]]
+        if all(abs(a - b) < 1e-6 for a, b in zip(target, self.target_pan)):
+            return
+        self.start_pan = self.current_pan.copy()
+        self.target_pan = target
+        self.move_started = time.monotonic()
+        self.move_duration = max(0.02, cfg["movement_ms"] / 1000.0)
+
+    def tick_pan(self) -> None:
+        if self.mode != "Pan" or not self.healthy(check_node=False):
+            return
+        elapsed = time.monotonic() - self.move_started
+        t = min(1.0, elapsed / self.move_duration)
+        ease = t * t * (3.0 - 2.0 * t)
+        values = [
+            a + (b - a) * ease
+            for a, b in zip(self.start_pan, self.target_pan)
+        ]
+        if (
+            any(abs(a - b) > 1e-4 for a, b in zip(values, self.current_pan))
+            or t >= 1.0
+        ):
+            self.current_pan = values
+            self._send_pan(*values)
 
     def set_hrtf_target(self, cfg: dict) -> None:
         if self.mode != "HRTF":
@@ -447,7 +493,7 @@ def runtime_status(
             "backend": (
                 "PipeWire SOFA"
                 if runtime.mode == "HRTF"
-                else "PipeWire + native pan DSP"
+                else "PipeWire matrix pan"
             ),
             "pan": cfg["pan"],
             "elevation": cfg["elevation"],
@@ -546,8 +592,7 @@ def serve() -> int:
                         runtime, cfg, runtime.healthy(check_node=False)
                     )
                 else:
-                    # Pan DSP consumes the same config file directly and
-                    # interpolates it per sample; do not rebuild its graph.
+                    runtime.set_pan_target(cfg)
                     runtime_status(
                         runtime, cfg, runtime.healthy(check_node=False)
                     )
@@ -556,6 +601,8 @@ def serve() -> int:
             now = time.monotonic()
             if runtime.mode == "HRTF":
                 runtime.tick_hrtf()
+            elif runtime.mode == "Pan":
+                runtime.tick_pan()
 
             if now >= next_health:
                 next_health = now + 2.0
@@ -675,7 +722,8 @@ def main(argv: list[str]) -> int:
         except json.JSONDecodeError:
             return 64
 
-        updated = config()
+        base = config()
+        updated = dict(base)
         updated.update({k: change[k] for k in set(DEFAULT) & change.keys()})
         updated["enabled"] = True
         atomic(CONFIG, updated)
@@ -687,14 +735,22 @@ def main(argv: list[str]) -> int:
                 stderr=subprocess.DEVNULL,
             )
 
-        # Give the service time to create/select the virtual sink and apply the
-        # requested position before the audible probe starts.
-        for _ in range(30):
-            if default_name() == VIRTUAL:
-                break
-            time.sleep(0.05)
-        time.sleep(0.12)
-        return 0 if play_test_tone() else 1
+        ok = False
+        try:
+            requested_mode = updated["mode"]
+            for _ in range(50):
+                try:
+                    runtime = json.loads(RUNTIME.read_text())
+                except (OSError, json.JSONDecodeError):
+                    runtime = {}
+                if default_name() == VIRTUAL and runtime.get("mode") == requested_mode:
+                    break
+                time.sleep(0.05)
+            time.sleep(0.15)
+            ok = play_test_tone()
+        finally:
+            atomic(CONFIG, base)
+        return 0 if ok else 1
 
     if cmd == "test-sweep":
         try:
@@ -728,9 +784,7 @@ def main(argv: list[str]) -> int:
                 time.sleep(0.22)
                 ok = play_test_tone() and ok
         finally:
-            restored = dict(updated)
-            restored["pan"] = float(change.get("restorePan", base.get("pan", 0.0)))
-            atomic(CONFIG, restored)
+            atomic(CONFIG, base)
         return 0 if ok else 1
 
     if cmd == "stop":
