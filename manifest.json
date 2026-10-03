@@ -1,0 +1,11 @@
+{
+  "name": "SpatialAudio",
+  "version": "1.0.0",
+  "author": "dcqwqc",
+  "homepage": "https://github.com/dcqwqc/CaelestiaPlugin-SpatialAudio",
+  "icon": "surround_sound",
+  "description": "System-wide stereo speaker panning and optional SOFA HRTF spatial audio, backed by PipeWire.",
+  "entryPoints": [{ "type": "custom", "source": "Main.qml" }],
+  "settings": "Settings.qml",
+  "settingsUi": "SettingsUi.qml"
+}
