@@ -6,6 +6,7 @@ import QtQuick.Layouts
 import Quickshell.Io
 import qs.components
 import qs.modules.nexus.common
+import dcqwqc.spatialaudio
 
 ColumnLayout {
     id: root
@@ -55,6 +56,29 @@ ColumnLayout {
         }
     }
 
+    Process {
+        id: audibleTest
+    }
+
+    function playTest(panValue, forceHrtf): void {
+        if (!settings || audibleTest.running)
+            return;
+        const nextMode = forceHrtf ? "HRTF" : String(settings.mode ?? "Pan");
+        settings.enabled = true;
+        settings.mode = nextMode;
+        settings.pan = clamp(panValue, -1, 1);
+        audibleTest.command = [helper, "test-tone", JSON.stringify({
+                enabled: true,
+                mode: nextMode,
+                pan: Number(settings.pan),
+                elevation: Number(settings.elevation ?? 0),
+                width: Number(settings.width ?? 1),
+                intensity: Number(settings.intensity ?? 1),
+                movement_ms: Number(settings.movementMs ?? 220)
+            })];
+        audibleTest.running = true;
+    }
+
     Timer {
         interval: 1500
         repeat: true
@@ -77,10 +101,10 @@ ColumnLayout {
         text: qsTr("Spatial audio")
     }
 
-    SwitchRow {
+    ToggleRow {
         Layout.fillWidth: true
         first: true
-        label: qsTr("Enable system routing")
+        text: qsTr("Enable system routing")
         subtext: qsTr("Routes normal apps through a reversible virtual sink. Disabling restores the previous output.")
         checked: Boolean(root.settings?.enabled)
         onToggled: checked => {
@@ -176,6 +200,43 @@ ColumnLayout {
         onMoved: v => {
             if (root.settings)
                 root.settings.movementMs = Math.round(v);
+        }
+    }
+
+    SectionHeader {
+        text: qsTr("Audible test")
+    }
+
+    StyledText {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        color: Colours.palette.m3outline
+        font: Tokens.font.body.small
+        text: qsTr("These buttons enable Spatial Audio, move the virtual source, and play a short tone through the actual PipeWire route.")
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+
+        Button {
+            text: qsTr("Test left")
+            enabled: !audibleTest.running
+            onClicked: root.playTest(-0.85, false)
+        }
+        Button {
+            text: qsTr("Test center")
+            enabled: !audibleTest.running
+            onClicked: root.playTest(0, false)
+        }
+        Button {
+            text: qsTr("Test right")
+            enabled: !audibleTest.running
+            onClicked: root.playTest(0.85, false)
+        }
+        Button {
+            text: qsTr("Test HRTF")
+            enabled: !audibleTest.running
+            onClicked: root.playTest(0.7, true)
         }
     }
 

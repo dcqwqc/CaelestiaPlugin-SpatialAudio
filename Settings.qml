@@ -17,7 +17,7 @@ SettingsObject {
     SettingMeta on mode {
         label: "Mode"
         description: "Pan works on stereo speakers. HRTF uses the installed SOFA profile."
-        inputType: SettingMeta.ComboBox
+        inputType: SettingMeta.SplitButton
         options: ["Pan", "HRTF"]
     }
     SettingMeta on pan {

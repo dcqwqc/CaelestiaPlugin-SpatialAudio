@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell.Io
+import dcqwqc.spatialaudio
 
 Item {
     id: root

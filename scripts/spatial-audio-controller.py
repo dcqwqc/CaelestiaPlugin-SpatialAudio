@@ -578,6 +578,38 @@ def serve() -> int:
     return 0
 
 
+def play_test_tone() -> bool:
+    """Play a short desktop sound through the current default PipeWire sink."""
+    sound = Path("/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga")
+    if not sound.is_file():
+        sound = Path("/usr/share/sounds/alsa/Front_Center.wav")
+    if not sound.is_file():
+        return False
+
+    try:
+        process = subprocess.Popen(
+            ["pw-play", "--volume", "0.16", str(sound)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # On this PipeWire build pw-play can keep the stream alive after the
+        # short clip has been consumed. Let the audible part finish, then close
+        # the client explicitly so a Settings test never leaves a stray stream.
+        time.sleep(0.85)
+        code = process.poll()
+        if code is None:
+            process.terminate()
+            try:
+                process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=0.5)
+            return True
+        return code == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
 def service_active() -> bool:
     return (
         subprocess.run(
@@ -636,6 +668,33 @@ def main(argv: list[str]) -> int:
             else:
                 restore_default()
         return 0
+
+    if cmd == "test-tone":
+        try:
+            change = json.loads(argv[2]) if len(argv) > 2 else {}
+        except json.JSONDecodeError:
+            return 64
+
+        updated = config()
+        updated.update({k: change[k] for k in set(DEFAULT) & change.keys()})
+        updated["enabled"] = True
+        atomic(CONFIG, updated)
+
+        if not service_active():
+            subprocess.run(
+                ["systemctl", "--user", "start", "caelestia-spatial-audio.service"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+        # Give the service time to create/select the virtual sink and apply the
+        # requested position before the audible probe starts.
+        for _ in range(30):
+            if default_name() == VIRTUAL:
+                break
+            time.sleep(0.05)
+        time.sleep(0.12)
+        return 0 if play_test_tone() else 1
 
     if cmd == "stop":
         if service_active():
