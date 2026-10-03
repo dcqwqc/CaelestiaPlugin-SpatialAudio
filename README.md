@@ -47,3 +47,7 @@ sink. Inspect `systemctl --user status caelestia-spatial-audio` and run
 `scripts/spatial-audio-controller.py status`. The test suite is silent and
 uses only zero PCM / disconnected filter graphs. `tests/smoke.py --real`
 performs the silent create/change/teardown/default-restore lifecycle check.
+
+### Sound stage playground
+
+The native settings page uses Caelestia-themed controls throughout and includes audible left/center/right/HRTF probes plus a left → center → right sweep. A live position indicator mirrors the test target, while normal position/orbit controls remain available for real application audio.

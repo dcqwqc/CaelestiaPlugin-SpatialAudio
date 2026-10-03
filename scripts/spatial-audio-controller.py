@@ -696,6 +696,43 @@ def main(argv: list[str]) -> int:
         time.sleep(0.12)
         return 0 if play_test_tone() else 1
 
+    if cmd == "test-sweep":
+        try:
+            change = json.loads(argv[2]) if len(argv) > 2 else {}
+        except json.JSONDecodeError:
+            return 64
+
+        base = config()
+        updated = dict(base)
+        updated.update({k: change[k] for k in set(DEFAULT) & change.keys()})
+        updated["enabled"] = True
+        updated["mode"] = "Pan"
+
+        if not service_active():
+            subprocess.run(
+                ["systemctl", "--user", "start", "caelestia-spatial-audio.service"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+        ok = True
+        try:
+            for pan in (-0.85, 0.0, 0.85):
+                step = dict(updated)
+                step["pan"] = pan
+                atomic(CONFIG, step)
+                for _ in range(20):
+                    if default_name() == VIRTUAL:
+                        break
+                    time.sleep(0.05)
+                time.sleep(0.22)
+                ok = play_test_tone() and ok
+        finally:
+            restored = dict(updated)
+            restored["pan"] = float(change.get("restorePan", base.get("pan", 0.0)))
+            atomic(CONFIG, restored)
+        return 0 if ok else 1
+
     if cmd == "stop":
         if service_active():
             subprocess.run(
