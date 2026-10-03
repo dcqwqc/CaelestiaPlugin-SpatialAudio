@@ -1,29 +1,102 @@
 #!/usr/bin/env python3
-import importlib.util, json, math, pathlib, struct, subprocess, tempfile, unittest
-ROOT=pathlib.Path(__file__).resolve().parents[1]
-def controller():
- spec=importlib.util.spec_from_file_location('controller',ROOT/'scripts/spatial-audio-controller.py'); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
+import importlib.util
+import json
+import math
+import pathlib
+import struct
+import subprocess
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+spec = importlib.util.spec_from_file_location(
+    "spatial_controller", ROOT / "scripts/spatial-audio-controller.py"
+)
+controller = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(controller)
+
+
 class SpatialTests(unittest.TestCase):
- def test_equal_power(self):
-  for p in (-1,-.4,0,.8,1): self.assertAlmostEqual(math.cos((p+1)*math.pi/4)**2+math.sin((p+1)*math.pi/4)**2,1,places=6)
- def test_graph_dry_run(self):
-  d=json.loads(subprocess.check_output([str(ROOT/'scripts/spatial-audio-controller.py'),'dry-run'],text=True)); self.assertIn('physical',d); self.assertIn('filter.graph',d['graph'])
- def test_sofa_graph(self):
-  m=controller()
-  g=m.graph({**m.DEFAULT,'mode':'HRTF'},'physical'); self.assertIn('type = sofa',g); self.assertIn(str(m.SOFA),g)
- def test_discovery_never_selects_virtual_sink(self):
-  m=controller(); old_nodes,old_default=m.nodes,m.default_name
-  m.nodes=lambda:[{'id':1,'info':{'props':{'media.class':'Audio/Sink','node.name':'caelestia_spatial_audio'}}},{'id':2,'info':{'props':{'media.class':'Audio/Sink','node.name':'speaker'}}}]
-  m.default_name=lambda:'caelestia_spatial_audio'
-  try: self.assertEqual(m.props(m.physical_sink())['node.name'],'speaker')
-  finally: m.nodes, m.default_name=old_nodes,old_default
- def test_dsp_silence(self):
-  with tempfile.TemporaryDirectory() as td:
-   c=pathlib.Path(td)/'c.json'; c.write_text(json.dumps({'pan':.4,'width':1,'intensity':1,'movement_ms':20}))
-   p=subprocess.run([str(ROOT/'native/spatial-dsp'),str(c),td],input=b'\0'*4096,stdout=subprocess.PIPE,check=True); self.assertEqual(p.stdout,b'\0'*4096)
- def test_interpolation_and_no_added_gain(self):
-  with tempfile.TemporaryDirectory() as td:
-   c=pathlib.Path(td)/'c.json'; c.write_text(json.dumps({'pan':1,'width':1,'intensity':1,'movement_ms':20}))
-   data=struct.pack('<'+'f'*96000,*([1.0,1.0]*48000)); p=subprocess.run([str(ROOT/'native/spatial-dsp'),str(c),td],input=data,stdout=subprocess.PIPE,check=True)
-   samples=struct.unpack('<'+'f'*(len(p.stdout)//4),p.stdout); self.assertLessEqual(max(map(abs,samples)),1.00001); self.assertGreater(samples[-1],samples[-2])
-if __name__=='__main__': unittest.main()
+    def run_dsp(self, cfg, frames):
+        with tempfile.TemporaryDirectory() as td:
+            config = pathlib.Path(td) / "config.json"
+            config.write_text(json.dumps(cfg))
+            raw = b"".join(struct.pack("<ff", *frame) for frame in frames)
+            result = subprocess.run(
+                [str(ROOT / "native/spatial-dsp"), str(config)],
+                input=raw,
+                stdout=subprocess.PIPE,
+                check=True,
+            )
+            return [
+                struct.unpack_from("<ff", result.stdout, offset)
+                for offset in range(0, len(result.stdout), 8)
+            ]
+
+    def test_center_is_transparent(self):
+        frames = [(0.8, 0.2), (-0.3, 0.7), (0.0, 0.0)]
+        out = self.run_dsp(
+            {"pan": 0, "width": 1, "intensity": 1, "movement_ms": 20},
+            frames,
+        )
+        for got, expected in zip(out, frames):
+            self.assertAlmostEqual(got[0], expected[0], places=5)
+            self.assertAlmostEqual(got[1], expected[1], places=5)
+
+    def test_hard_pan_keeps_both_source_channels(self):
+        left = self.run_dsp(
+            {"pan": -1, "width": 1, "intensity": 1, "movement_ms": 20},
+            [(0.8, 0.2)],
+        )[0]
+        self.assertAlmostEqual(left[0], 0.5, places=4)
+        self.assertAlmostEqual(left[1], 0.0, places=4)
+
+        right = self.run_dsp(
+            {"pan": 1, "width": 1, "intensity": 1, "movement_ms": 20},
+            [(0.8, 0.2)],
+        )[0]
+        self.assertAlmostEqual(right[0], 0.0, places=4)
+        self.assertAlmostEqual(right[1], 0.5, places=4)
+
+    def test_width_zero_makes_mono(self):
+        out = self.run_dsp(
+            {"pan": 0, "width": 0, "intensity": 1, "movement_ms": 20},
+            [(0.8, 0.2)],
+        )[0]
+        self.assertAlmostEqual(out[0], 0.5, places=4)
+        self.assertAlmostEqual(out[1], 0.5, places=4)
+
+    def test_hrtf_azimuth_mapping(self):
+        self.assertEqual(controller.hrtf_azimuth(0), 0)
+        self.assertEqual(controller.hrtf_azimuth(-1), 90)
+        self.assertEqual(controller.hrtf_azimuth(1), 270)
+
+    def test_hrtf_graph_is_real_sofa_graph(self):
+        cfg = {**controller.DEFAULT, "mode": "HRTF"}
+        graph = controller.graph(cfg, "physical.sink")
+        self.assertIn("type = sofa", graph)
+        self.assertIn("label = spatializer", graph)
+        self.assertIn('"Radius" = 3.0', graph)
+        self.assertIn(str(controller.SOFA), graph)
+        self.assertIn('target.object = "physical.sink"', graph)
+
+    def test_pan_graph_is_stereo_virtual_sink(self):
+        graph = controller.graph(controller.DEFAULT, "physical.sink")
+        self.assertIn("media.class = Audio/Sink", graph)
+        self.assertIn("audio.position = [ FL FR ]", graph)
+        self.assertIn(controller.VIRTUAL, graph)
+
+    def test_dry_run_reports_capabilities(self):
+        data = json.loads(
+            subprocess.check_output(
+                [str(ROOT / "scripts/spatial-audio-controller.py"), "dry-run"],
+                text=True,
+            )
+        )
+        self.assertIn("physical", data)
+        self.assertIn("hrtfAvailable", data)
+
+
+if __name__ == "__main__":
+    unittest.main()

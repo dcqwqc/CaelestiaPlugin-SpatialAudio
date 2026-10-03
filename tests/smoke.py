@@ -23,7 +23,7 @@ try:
     configure({**saved, "enabled": True, "mode": "Pan", "pan": -.4})
     assert status()["active"] and status()["virtual"] == ctl.VIRTUAL
     configure({**saved, "enabled": True, "mode": "HRTF", "pan": .3, "elevation": 10})
-    assert status()["active"] and status()["mode"] == "HRTF" and status()["sofa"]
+    assert status()["active"] and status()["mode"] == "HRTF" and status()["hrtfAvailable"]
     configure({**saved, "enabled": False})
     assert ctl.default_name() == expected_restore, (ctl.default_name(), expected_restore)
 finally:

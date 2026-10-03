@@ -5,13 +5,27 @@ import Quickshell.Io
 
 Item {
     id: root
+
     property var settings: null
+    property bool syncQueued: false
     readonly property string helper: Qt.resolvedUrl("scripts/spatial-audio-controller.py").toString().replace("file://", "")
     visible: false
 
-    function sync(): void {
+    function queueSync(): void {
+        syncQueued = true;
+        syncTimer.restart();
+    }
+
+    function flushSync(): void {
         if (!settings)
             return;
+        if (syncProcess.running) {
+            syncQueued = true;
+            syncTimer.restart();
+            return;
+        }
+
+        syncQueued = false;
         syncProcess.command = [helper, "configure", JSON.stringify({
                 enabled: Boolean(settings.enabled),
                 mode: String(settings.mode),
@@ -24,33 +38,46 @@ Item {
         syncProcess.running = true;
     }
 
+    Timer {
+        id: syncTimer
+        interval: 35
+        repeat: false
+        onTriggered: root.flushSync()
+    }
+
     Process {
         id: syncProcess
         running: false
+        onExited: {
+            if (root.syncQueued)
+                syncTimer.restart();
+        }
     }
-    Component.onCompleted: sync()
+
+    Component.onCompleted: queueSync()
+
     Connections {
         target: root.settings
         function onEnabledChanged(): void {
-            root.sync();
+            root.queueSync();
         }
         function onModeChanged(): void {
-            root.sync();
+            root.queueSync();
         }
         function onPanChanged(): void {
-            root.sync();
+            root.queueSync();
         }
         function onElevationChanged(): void {
-            root.sync();
+            root.queueSync();
         }
         function onWidthChanged(): void {
-            root.sync();
+            root.queueSync();
         }
         function onIntensityChanged(): void {
-            root.sync();
+            root.queueSync();
         }
         function onMovementMsChanged(): void {
-            root.sync();
+            root.queueSync();
         }
     }
 }

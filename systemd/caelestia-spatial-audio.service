@@ -6,7 +6,6 @@ Wants=pipewire.service wireplumber.service
 [Service]
 Type=simple
 ExecStart=%h/.local/share/caelestia/plugins/spatialaudio/scripts/spatial-audio-controller.py serve
-ExecStop=%h/.local/share/caelestia/plugins/spatialaudio/scripts/spatial-audio-controller.py stop
 Restart=on-failure
 RestartSec=2
 
