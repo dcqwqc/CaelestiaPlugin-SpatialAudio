@@ -3,9 +3,11 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import Caelestia.Config
 import qs.components
 import qs.components.controls
 import qs.modules.nexus.common
+import qs.services
 import dcqwqc.spatialaudio
 
 ColumnLayout {
@@ -14,6 +16,12 @@ ColumnLayout {
     property var settings: null
     property bool orbiting: false
     property string diagnostics: qsTr("Checking PipeWire…")
+    property string diagnosticStatus: qsTr("Checking…")
+    property string diagnosticMode: "—"
+    property string diagnosticBackend: "—"
+    property string diagnosticHrtf: "—"
+    property string diagnosticRoute: qsTr("Resolving…")
+    property string diagnosticReason: ""
     property string testState: qsTr("Ready")
     property real demoPan: Number(settings?.pan ?? 0)
     readonly property string helper: Qt.resolvedUrl("scripts/spatial-audio-controller.py").toString().replace("file://", "")
@@ -51,16 +59,21 @@ ColumnLayout {
     function showStatus(raw): void {
         try {
             const d = JSON.parse(raw);
-            const active = d.active ? qsTr("Active") : qsTr("Inactive");
-            const mode = d.mode ?? String(settings?.mode ?? "Pan");
-            const backend = d.backend ?? "PipeWire";
-            const physical = d.physical ?? qsTr("not resolved");
-            const virtualSink = d.virtual ?? qsTr("not routed");
-            const hrtf = d.hrtfAvailable ? qsTr("available") : qsTr("unavailable");
-            const reason = d.reason ? "\n" + qsTr("State: ") + d.reason : "";
-            diagnostics = active + " · " + mode + " · " + backend + "\n" + qsTr("Physical: ") + physical + "\n" + qsTr("Virtual: ") + virtualSink + "\n" + qsTr("HRTF: ") + hrtf + reason;
+            diagnosticStatus = d.active ? qsTr("Active") : qsTr("Inactive");
+            diagnosticMode = String(d.mode ?? settings?.mode ?? "Pan");
+            diagnosticBackend = String(d.backend ?? "PipeWire");
+            diagnosticHrtf = d.hrtfAvailable ? qsTr("Available") : qsTr("Unavailable");
+            diagnosticRoute = d.active ? qsTr("Spatial Audio → Speakers") : qsTr("Direct speakers");
+            diagnosticReason = d.reason ? String(d.reason) : "";
+            diagnostics = diagnosticStatus;
         } catch (e) {
-            diagnostics = raw.length ? raw.trim() : qsTr("Controller unavailable");
+            diagnosticStatus = qsTr("Unavailable");
+            diagnosticMode = "—";
+            diagnosticBackend = "—";
+            diagnosticHrtf = "—";
+            diagnosticRoute = qsTr("Controller unavailable");
+            diagnosticReason = "";
+            diagnostics = diagnosticStatus;
         }
     }
 
@@ -459,49 +472,51 @@ ColumnLayout {
         text: qsTr("Position")
     }
 
-    GridLayout {
+    ColumnLayout {
         Layout.fillWidth: true
-        columns: 2
-        columnSpacing: Tokens.spacing.small
-        rowSpacing: Tokens.spacing.small
+        spacing: Tokens.spacing.small
 
         IconTextButton {
             Layout.fillWidth: true
-            Layout.preferredWidth: 1
             icon: "arrow_back"
             text: qsTr("Left")
             type: IconTextButton.Tonal
-            horizontalPadding: Tokens.padding.small
+            shapeMorph: true
+            horizontalPadding: Tokens.padding.large
+            verticalPadding: Tokens.padding.medium
             onClicked: root.setPan(-1)
         }
 
         IconTextButton {
             Layout.fillWidth: true
-            Layout.preferredWidth: 1
             icon: "filter_center_focus"
             text: qsTr("Center")
             type: IconTextButton.Tonal
-            horizontalPadding: Tokens.padding.small
+            shapeMorph: true
+            horizontalPadding: Tokens.padding.large
+            verticalPadding: Tokens.padding.medium
             onClicked: root.setPan(0)
         }
 
         IconTextButton {
             Layout.fillWidth: true
-            Layout.preferredWidth: 1
             icon: "arrow_forward"
             text: qsTr("Right")
             type: IconTextButton.Tonal
-            horizontalPadding: Tokens.padding.small
+            shapeMorph: true
+            horizontalPadding: Tokens.padding.large
+            verticalPadding: Tokens.padding.medium
             onClicked: root.setPan(1)
         }
 
         IconTextButton {
             Layout.fillWidth: true
-            Layout.preferredWidth: 1
             icon: "open_in_full"
             text: qsTr("Wide")
             type: IconTextButton.Tonal
-            horizontalPadding: Tokens.padding.small
+            shapeMorph: true
+            horizontalPadding: Tokens.padding.large
+            verticalPadding: Tokens.padding.medium
             disabled: String(root.settings?.mode) === "HRTF"
             onClicked: {
                 if (root.settings) {
@@ -510,30 +525,32 @@ ColumnLayout {
                 }
             }
         }
-    }
 
-    IconTextButton {
-        Layout.fillWidth: true
-        icon: root.orbiting ? "stop" : "360"
-        text: root.orbiting ? qsTr("Stop current-audio orbit") : qsTr("Orbit current audio")
-        type: root.orbiting ? IconTextButton.Filled : IconTextButton.Tonal
-        shapeMorph: true
-        verticalPadding: Tokens.padding.medium
-        onClicked: {
-            root.orbiting = !root.orbiting;
-            orbit.running = root.orbiting;
+        IconTextButton {
+            Layout.fillWidth: true
+            icon: root.orbiting ? "stop" : "360"
+            text: root.orbiting ? qsTr("Stop current-audio orbit") : qsTr("Orbit current audio")
+            type: root.orbiting ? IconTextButton.Filled : IconTextButton.Tonal
+            shapeMorph: true
+            horizontalPadding: Tokens.padding.large
+            verticalPadding: Tokens.padding.medium
+            onClicked: {
+                root.orbiting = !root.orbiting;
+                orbit.running = root.orbiting;
+            }
         }
-    }
 
-    IconTextButton {
-        Layout.fillWidth: true
-        icon: "restart_alt"
-        text: qsTr("Reset position to center")
-        type: IconTextButton.Text
-        onClicked: {
-            root.orbiting = false;
-            orbit.running = false;
-            root.setPan(0);
+        IconTextButton {
+            Layout.fillWidth: true
+            icon: "restart_alt"
+            text: qsTr("Reset position to center")
+            type: IconTextButton.Text
+            horizontalPadding: Tokens.padding.large
+            onClicked: {
+                root.orbiting = false;
+                orbit.running = false;
+                root.setPan(0);
+            }
         }
     }
 
@@ -541,19 +558,126 @@ ColumnLayout {
         text: qsTr("Diagnostics")
     }
 
-    StyledText {
+    StyledRect {
         Layout.fillWidth: true
-        text: root.diagnostics
-        wrapMode: Text.Wrap
-        color: Colours.palette.m3outline
-        font: Tokens.font.body.small
-    }
+        implicitHeight: diagnosticsLayout.implicitHeight + Tokens.padding.large * 2
+        radius: Tokens.rounding.extraLarge
+        color: Colours.tPalette.m3surfaceContainer
 
-    IconTextButton {
-        Layout.alignment: Qt.AlignRight
-        icon: "refresh"
-        text: qsTr("Refresh diagnostics")
-        type: IconTextButton.Text
-        onClicked: root.refresh()
+        ColumnLayout {
+            id: diagnosticsLayout
+
+            anchors.fill: parent
+            anchors.margins: Tokens.padding.large
+            spacing: Tokens.spacing.small
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                StyledText {
+                    Layout.fillWidth: true
+                    text: qsTr("Status")
+                    color: Colours.palette.m3outline
+                    font: Tokens.font.body.small
+                }
+
+                StyledText {
+                    text: root.diagnosticStatus
+                    color: root.diagnosticStatus === qsTr("Active") ? Colours.palette.m3primary : Colours.palette.m3onSurface
+                    font: Tokens.font.label.medium
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                StyledText {
+                    Layout.fillWidth: true
+                    text: qsTr("Mode")
+                    color: Colours.palette.m3outline
+                    font: Tokens.font.body.small
+                }
+
+                StyledText {
+                    text: root.diagnosticMode
+                    color: Colours.palette.m3onSurface
+                    font: Tokens.font.label.medium
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                StyledText {
+                    Layout.fillWidth: true
+                    text: qsTr("Backend")
+                    color: Colours.palette.m3outline
+                    font: Tokens.font.body.small
+                }
+
+                StyledText {
+                    Layout.maximumWidth: 160
+                    text: root.diagnosticBackend
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignRight
+                    color: Colours.palette.m3onSurface
+                    font: Tokens.font.label.medium
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                StyledText {
+                    Layout.fillWidth: true
+                    text: qsTr("HRTF")
+                    color: Colours.palette.m3outline
+                    font: Tokens.font.body.small
+                }
+
+                StyledText {
+                    text: root.diagnosticHrtf
+                    color: Colours.palette.m3onSurface
+                    font: Tokens.font.label.medium
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                StyledText {
+                    Layout.fillWidth: true
+                    text: qsTr("Route")
+                    color: Colours.palette.m3outline
+                    font: Tokens.font.body.small
+                }
+
+                StyledText {
+                    Layout.maximumWidth: 170
+                    text: root.diagnosticRoute
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignRight
+                    color: Colours.palette.m3onSurface
+                    font: Tokens.font.label.medium
+                }
+            }
+
+            StyledText {
+                Layout.fillWidth: true
+                visible: root.diagnosticReason.length > 0
+                text: root.diagnosticReason
+                wrapMode: Text.Wrap
+                color: Colours.palette.m3error
+                font: Tokens.font.body.small
+            }
+
+            IconTextButton {
+                Layout.fillWidth: true
+                icon: "refresh"
+                text: qsTr("Refresh diagnostics")
+                type: IconTextButton.Text
+                onClicked: root.refresh()
+            }
+        }
     }
 }
