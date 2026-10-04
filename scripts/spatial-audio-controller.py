@@ -416,10 +416,14 @@ class Runtime:
             a + (b - a) * ease
             for a, b in zip(self.start_pan, self.target_pan)
         ]
-        if (
-            any(abs(a - b) > 1e-4 for a, b in zip(values, self.current_pan))
-            or t >= 1.0
-        ):
+        changed = any(
+            abs(a - b) > 1e-4 for a, b in zip(values, self.current_pan)
+        )
+        final_not_sent = t >= 1.0 and any(
+            abs(a - b) > 1e-9
+            for a, b in zip(self.current_pan, self.target_pan)
+        )
+        if changed or final_not_sent:
             self.current_pan = values
             self._send_pan(*values)
 
@@ -454,10 +458,14 @@ class Runtime:
             a + (b - a) * ease
             for a, b in zip(self.start_hrtf, self.target_hrtf)
         ]
-        if (
-            any(abs(a - b) > 1e-4 for a, b in zip(values, self.current_hrtf))
-            or t >= 1.0
-        ):
+        changed = any(
+            abs(a - b) > 1e-4 for a, b in zip(values, self.current_hrtf)
+        )
+        final_not_sent = t >= 1.0 and any(
+            abs(a - b) > 1e-9
+            for a, b in zip(self.current_hrtf, self.target_hrtf)
+        )
+        if changed or final_not_sent:
             self.current_hrtf = values
             self._send_hrtf(*values)
 

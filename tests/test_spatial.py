@@ -104,6 +104,46 @@ class SpatialTests(unittest.TestCase):
         self.assertIn("audio.position = [ FL FR ]", graph)
         self.assertIn(controller.VIRTUAL, graph)
 
+    def test_pan_tick_sends_final_value_once(self):
+        runtime = controller.Runtime()
+        runtime.mode = "Pan"
+        runtime.vid = 42
+        runtime.start_pan = [0.0, 1.0, 1.0]
+        runtime.target_pan = [1.0, 1.0, 1.0]
+        runtime.current_pan = [0.99995, 1.0, 1.0]
+        runtime.move_duration = 0.02
+        runtime.move_started = controller.time.monotonic() - 1.0
+        runtime.healthy = lambda check_node=False: True
+
+        sent = []
+        runtime._send_pan = lambda *values: sent.append(values) or True
+
+        runtime.tick_pan()
+        runtime.tick_pan()
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(runtime.current_pan, runtime.target_pan)
+
+    def test_hrtf_tick_sends_final_value_once(self):
+        runtime = controller.Runtime()
+        runtime.mode = "HRTF"
+        runtime.vid = 42
+        runtime.start_hrtf = [0.0, 0.0, 1.0]
+        runtime.target_hrtf = [1.0, 20.0, 0.8]
+        runtime.current_hrtf = [0.99995, 19.99995, 0.80001]
+        runtime.move_duration = 0.02
+        runtime.move_started = controller.time.monotonic() - 1.0
+        runtime.healthy = lambda check_node=False: True
+
+        sent = []
+        runtime._send_hrtf = lambda *values: sent.append(values) or True
+
+        runtime.tick_hrtf()
+        runtime.tick_hrtf()
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(runtime.current_hrtf, runtime.target_hrtf)
+
     def test_dry_run_reports_capabilities(self):
         data = json.loads(
             subprocess.check_output(
