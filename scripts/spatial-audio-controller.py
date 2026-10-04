@@ -12,6 +12,7 @@ from pathlib import Path
 
 APP = "caelestia-spatial-audio"
 VIRTUAL = "caelestia_spatial_audio"
+TEST_VIRTUAL = "caelestia_spatial_audio_test"
 ROOT = Path(__file__).resolve().parents[1]
 SOFA = Path("/usr/share/libmysofa/MIT_KEMAR_normal_pinna.sofa")
 SOFA_PLUGIN = Path("/usr/lib/spa-0.2/filter-graph/libspa-filter-graph-plugin-sofa.so")
@@ -89,6 +90,45 @@ def default_name() -> str | None:
         if "node.name" in line and "=" in line:
             return line.split("=", 1)[1].strip().strip('"')
     return None
+
+
+def sink_gain(name: str) -> tuple[float, bool] | None:
+    ident = node_id(name)
+    if ident is None:
+        return None
+    result = subprocess.run(
+        ["wpctl", "get-volume", str(ident)],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.split()
+    try:
+        volume = float(parts[1])
+    except (IndexError, ValueError):
+        return None
+    return volume, "[MUTED]" in result.stdout
+
+
+def set_sink_gain(name: str, volume: float, muted: bool | None = None) -> bool:
+    ident = node_id(name)
+    if ident is None:
+        return False
+    volume_result = subprocess.run(
+        ["wpctl", "set-volume", str(ident), f"{max(0.0, float(volume)):.6f}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if volume_result.returncode != 0:
+        return False
+    if muted is not None:
+        subprocess.run(
+            ["wpctl", "set-mute", str(ident), "1" if muted else "0"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    return True
 
 
 def physical_sink() -> dict | None:
@@ -180,7 +220,7 @@ def pan_matrix(pan: float, width: float, intensity: float) -> tuple[float, float
     )
 
 
-def graph(cfg: dict, physical: str) -> str:
+def graph(cfg: dict, physical: str, virtual: str = VIRTUAL) -> str:
     if cfg["mode"] == "Pan":
         ll, lr, rl, rr = pan_matrix(cfg["pan"], cfg["width"], cfg["intensity"])
         return f'''{{ node.description = "Caelestia Spatial Audio (Pan)"
@@ -207,14 +247,14 @@ filter.graph = {{
 audio.channels = 2
 audio.position = [ FL FR ]
 capture.props = {{
-  node.name = {q(VIRTUAL)}
+  node.name = {q(virtual)}
   media.class = Audio/Sink
   node.virtual = true
   audio.channels = 2
   audio.position = [ FL FR ]
 }}
 playback.props = {{
-  node.name = {q(VIRTUAL + "_out")}
+  node.name = {q(virtual + "_out")}
   node.passive = true
   node.dont-reconnect = true
   target.object = {q(physical)}
@@ -248,12 +288,12 @@ filter.graph = {{
 audio.channels = 1
 audio.position = [ MONO ]
 capture.props = {{
-  node.name = {q(VIRTUAL)}
+  node.name = {q(virtual)}
   media.class = Audio/Sink
   node.virtual = true
 }}
 playback.props = {{
-  node.name = {q(VIRTUAL + "_hrtf")}
+  node.name = {q(virtual + "_hrtf")}
   node.passive = true
   node.dont-reconnect = true
   target.object = {q(physical)}
@@ -472,7 +512,8 @@ class Runtime:
 
 def restore_default() -> None:
     remembered = read_state()
-    for name in (remembered.get("prior_default"), remembered.get("physical")):
+    physical_name = remembered.get("physical")
+    for name in (remembered.get("prior_default"), physical_name):
         if not name or name.startswith(VIRTUAL):
             continue
         ident = node_id(name)
@@ -483,6 +524,16 @@ def restore_default() -> None:
                 stderr=subprocess.DEVNULL,
             )
             break
+
+    # Spatial Audio owns the user-facing virtual sink while active. Restore the
+    # physical speaker's previous hardware gain/mute state when that layer is
+    # removed so enabling the plugin is completely reversible.
+    if isinstance(physical_name, str):
+        saved_volume = remembered.get("physical_volume")
+        saved_muted = remembered.get("physical_muted")
+        if isinstance(saved_volume, (int, float)):
+            set_sink_gain(physical_name, float(saved_volume), bool(saved_muted))
+
     RUNTIME.unlink(missing_ok=True)
 
 
@@ -521,6 +572,19 @@ def activate(runtime: Runtime, cfg: dict) -> bool:
     pname = props(physical).get("node.name")
     prior = default_name()
     remembered = read_state()
+
+    # Keep exactly one user-facing gain stage. If the physical speaker stays at
+    # (for example) 50%, Caelestia's virtual 100% is silently multiplied by
+    # that 0.5 hardware gain and sounds far too quiet. Preserve the old physical
+    # state once, then hold the hardware sink at unity/unmuted while Spatial
+    # Audio is active. AudioBoost can then make 100% mean normal gain and >100%
+    # mean intentional boost.
+    saved_gain = None
+    if remembered.get("physical") == pname and isinstance(remembered.get("physical_volume"), (int, float)):
+        saved_gain = (float(remembered["physical_volume"]), bool(remembered.get("physical_muted", False)))
+    if saved_gain is None:
+        saved_gain = sink_gain(pname) or (1.0, False)
+
     atomic(
         STATE,
         {
@@ -530,8 +594,11 @@ def activate(runtime: Runtime, cfg: dict) -> bool:
                 else remembered.get("prior_default") or pname
             ),
             "physical": pname,
+            "physical_volume": saved_gain[0],
+            "physical_muted": saved_gain[1],
         },
     )
+    set_sink_gain(pname, 1.0, False)
 
     requested = cfg["mode"]
     if runtime.start(cfg, physical):
@@ -633,17 +700,22 @@ def serve() -> int:
     return 0
 
 
-def play_test_tone() -> bool:
-    """Play a short desktop sound through the current default PipeWire sink."""
+def play_test_tone(target: str | None = None) -> bool:
+    """Play a short desktop sound, optionally into one explicit PipeWire sink."""
     sound = Path("/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga")
     if not sound.is_file():
         sound = Path("/usr/share/sounds/alsa/Front_Center.wav")
     if not sound.is_file():
         return False
 
+    command = ["pw-play", "--volume", "0.16"]
+    if target:
+        command += ["--target", target]
+    command.append(str(sound))
+
     try:
         process = subprocess.Popen(
-            ["pw-play", "--volume", "0.16", str(sound)],
+            command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -664,6 +736,64 @@ def play_test_tone() -> bool:
         return code == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def play_isolated_test(cfg: dict) -> bool:
+    """Play one probe through a private filter without changing global defaults."""
+    physical = physical_sink()
+    if not physical:
+        return False
+
+    physical_name = props(physical).get("node.name")
+    if not physical_name or physical_name.startswith(VIRTUAL):
+        return False
+    if cfg["mode"] == "HRTF" and not hrtf_available():
+        return False
+
+    test_name = f"{TEST_VIRTUAL}_{os.getpid()}_{time.monotonic_ns()}"
+    cli = None
+    try:
+        cli = subprocess.Popen(
+            ["pw-cli"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        if not cli.stdin:
+            return False
+        graph_args = " ".join(graph(cfg, physical_name, test_name).splitlines())
+        cli.stdin.write(
+            "load-module libpipewire-module-filter-chain " + graph_args + "
+"
+        )
+        cli.stdin.flush()
+
+        for _ in range(50):
+            if node_id(test_name) is not None:
+                break
+            if cli.poll() is not None:
+                return False
+            time.sleep(0.04)
+        else:
+            return False
+
+        # Explicit target is the key safety property: the probe never becomes
+        # the default sink, so existing app streams and all capture devices stay put.
+        return play_test_tone(test_name)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        if cli and cli.poll() is None:
+            cli.terminate()
+            try:
+                cli.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                cli.kill()
+                try:
+                    cli.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    pass
 
 def service_active() -> bool:
     return (
@@ -730,35 +860,13 @@ def main(argv: list[str]) -> int:
         except json.JSONDecodeError:
             return 64
 
-        base = config()
-        updated = dict(base)
-        updated.update({k: change[k] for k in set(DEFAULT) & change.keys()})
-        updated["enabled"] = True
-        atomic(CONFIG, updated)
-
-        if not service_active():
-            subprocess.run(
-                ["systemctl", "--user", "start", "caelestia-spatial-audio.service"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-
-        ok = False
-        try:
-            requested_mode = updated["mode"]
-            for _ in range(50):
-                try:
-                    runtime = json.loads(RUNTIME.read_text())
-                except (OSError, json.JSONDecodeError):
-                    runtime = {}
-                if default_name() == VIRTUAL and runtime.get("mode") == requested_mode:
-                    break
-                time.sleep(0.05)
-            time.sleep(0.15)
-            ok = play_test_tone()
-        finally:
-            atomic(CONFIG, base)
-        return 0 if ok else 1
+        test_cfg = config()
+        test_cfg.update({k: change[k] for k in set(DEFAULT) & change.keys()})
+        test_cfg["enabled"] = True
+        test_cfg["mode"] = (
+            "HRTF" if str(test_cfg["mode"]).upper() == "HRTF" else "Pan"
+        )
+        return 0 if play_isolated_test(test_cfg) else 1
 
     if cmd == "test-sweep":
         try:
@@ -766,33 +874,16 @@ def main(argv: list[str]) -> int:
         except json.JSONDecodeError:
             return 64
 
-        base = config()
-        updated = dict(base)
-        updated.update({k: change[k] for k in set(DEFAULT) & change.keys()})
-        updated["enabled"] = True
-        updated["mode"] = "Pan"
-
-        if not service_active():
-            subprocess.run(
-                ["systemctl", "--user", "start", "caelestia-spatial-audio.service"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+        test_cfg = config()
+        test_cfg.update({k: change[k] for k in set(DEFAULT) & change.keys()})
+        test_cfg["enabled"] = True
+        test_cfg["mode"] = "Pan"
 
         ok = True
-        try:
-            for pan in (-0.85, 0.0, 0.85):
-                step = dict(updated)
-                step["pan"] = pan
-                atomic(CONFIG, step)
-                for _ in range(20):
-                    if default_name() == VIRTUAL:
-                        break
-                    time.sleep(0.05)
-                time.sleep(0.22)
-                ok = play_test_tone() and ok
-        finally:
-            atomic(CONFIG, base)
+        for pan in (-0.85, 0.0, 0.85):
+            step = dict(test_cfg)
+            step["pan"] = pan
+            ok = play_isolated_test(step) and ok
         return 0 if ok else 1
 
     if cmd == "stop":
