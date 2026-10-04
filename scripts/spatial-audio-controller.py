@@ -764,8 +764,7 @@ def play_isolated_test(cfg: dict) -> bool:
             return False
         graph_args = " ".join(graph(cfg, physical_name, test_name).splitlines())
         cli.stdin.write(
-            "load-module libpipewire-module-filter-chain " + graph_args + "
-"
+            "load-module libpipewire-module-filter-chain " + graph_args + "\n"
         )
         cli.stdin.flush()
 

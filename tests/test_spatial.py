@@ -104,6 +104,16 @@ class SpatialTests(unittest.TestCase):
         self.assertIn("audio.position = [ FL FR ]", graph)
         self.assertIn(controller.VIRTUAL, graph)
 
+    def test_graph_can_use_private_test_sink_name(self):
+        graph = controller.graph(
+            {**controller.DEFAULT, "mode": "HRTF"},
+            "physical.sink",
+            "private_test_sink",
+        )
+        self.assertIn('node.name = "private_test_sink"', graph)
+        self.assertIn('node.name = "private_test_sink_hrtf"', graph)
+        self.assertNotIn('node.name = "caelestia_spatial_audio"', graph)
+
     def test_pan_tick_sends_final_value_once(self):
         runtime = controller.Runtime()
         runtime.mode = "Pan"
